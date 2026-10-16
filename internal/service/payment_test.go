@@ -469,3 +469,71 @@ func TestWalletService_ListActivityRejectsInvalidTimeRange(t *testing.T) {
 		require.ErrorIs(t, err, service.ErrInvalidTimeRange)
 	}
 }
+
+func TestWalletService_ListActivityTimeBoundsAndPaging(t *testing.T) {
+	f := newPaymentFixture(t)
+	ctx := context.Background()
+
+	alice := f.createUser(t)
+	wallet := f.createWallet(t, alice.ID, "IDR", 0)
+
+	base := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	for i := range 5 {
+		result, err := f.paymentSvc.TopUp(ctx, service.TopUpInput{
+			UserID:         alice.ID,
+			WalletID:       wallet.ID,
+			Amount:         int64(i + 1),
+			IdempotencyKey: fmt.Sprintf("bounds-%d", i),
+		})
+		require.NoError(t, err)
+		require.NoError(t, f.db.Model(&model.LedgerEntry{}).
+			Where("transaction_id = ?", result.Transaction.ID).
+			Update("created_at", base.Add(time.Duration(i)*time.Hour)).Error)
+	}
+
+	amounts := func(items []model.WalletActivity) []int64 {
+		out := make([]int64, 0, len(items))
+		for _, item := range items {
+			out = append(out, item.Amount)
+		}
+		return out
+	}
+	page := service.Pagination{Page: 1, PageSize: 10}
+
+	t.Run("from is inclusive and to is exclusive", func(t *testing.T) {
+		filter := model.ActivityFilter{From: base.Add(1 * time.Hour), To: base.Add(3 * time.Hour)}
+		result, err := f.walletSvc.ListActivity(ctx, alice.ID, wallet.ID, filter, page)
+		require.NoError(t, err)
+		assert.Equal(t, []int64{3, 2}, amounts(result.Items))
+		assert.Equal(t, int64(2), result.TotalItems)
+	})
+
+	t.Run("from equal to the newest entry", func(t *testing.T) {
+		filter := model.ActivityFilter{From: base.Add(4 * time.Hour)}
+		result, err := f.walletSvc.ListActivity(ctx, alice.ID, wallet.ID, filter, page)
+		require.NoError(t, err)
+		assert.Equal(t, []int64{5}, amounts(result.Items))
+	})
+
+	t.Run("to equal to the oldest entry", func(t *testing.T) {
+		filter := model.ActivityFilter{To: base}
+		result, err := f.walletSvc.ListActivity(ctx, alice.ID, wallet.ID, filter, page)
+		require.NoError(t, err)
+		assert.Empty(t, result.Items)
+		assert.Zero(t, result.TotalItems)
+	})
+
+	t.Run("filtered pages keep the filtered total", func(t *testing.T) {
+		filter := model.ActivityFilter{Type: model.TransactionTypeTopUp, From: base.Add(1 * time.Hour)}
+
+		var seen []int64
+		for pageNumber, want := range [][]int64{{5, 4}, {3, 2}, {}} {
+			result, err := f.walletSvc.ListActivity(ctx, alice.ID, wallet.ID, filter, service.Pagination{Page: pageNumber + 1, PageSize: 2})
+			require.NoError(t, err)
+			assert.Equal(t, want, amounts(result.Items), "page %d", pageNumber+1)
+			assert.Equal(t, int64(4), result.TotalItems, "page %d", pageNumber+1)
+			seen = append(seen, amounts(result.Items)...)
+		}
+		assert.Equal(t, []int64{5, 4, 3, 2}, seen)
+	})
+}
