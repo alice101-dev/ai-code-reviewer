@@ -26,6 +26,16 @@ type ActivityPage struct {
 	TotalItems int64
 }
 
+type CursorPage struct {
+	Cursor string
+	Limit  int
+}
+
+type ActivityFeed struct {
+	Items      []model.WalletActivity
+	NextCursor string
+}
+
 type WalletService struct {
 	wallets      WalletStore
 	transactions TransactionStore
@@ -106,6 +116,39 @@ func (s *WalletService) ListActivity(ctx context.Context, userID, walletID uuid.
 	}
 
 	return &ActivityPage{Items: items, TotalItems: total}, nil
+}
+
+func (s *WalletService) ListActivityFeed(ctx context.Context, userID, walletID uuid.UUID, filter model.ActivityFilter, page CursorPage) (*ActivityFeed, error) {
+	if !filter.From.IsZero() && !filter.To.IsZero() && !filter.From.Before(filter.To) {
+		return nil, ErrInvalidTimeRange
+	}
+
+	var before *model.ActivityCursor
+	if page.Cursor != "" {
+		cursor, err := decodeActivityCursor(page.Cursor)
+		if err != nil {
+			return nil, ErrInvalidCursor
+		}
+		before = &cursor
+	}
+
+	if _, err := s.Get(ctx, userID, walletID); err != nil {
+		return nil, err
+	}
+
+	items, err := s.transactions.ListWalletActivityBefore(ctx, walletID, filter, before, page.Limit+1)
+	if err != nil {
+		return nil, fmt.Errorf("list wallet activity feed: %w", err)
+	}
+
+	feed := &ActivityFeed{Items: items}
+	if len(items) > page.Limit {
+		feed.Items = items[:page.Limit]
+		last := feed.Items[len(feed.Items)-1]
+		feed.NextCursor = encodeActivityCursor(model.ActivityCursor{CreatedAt: last.CreatedAt, EntryID: last.EntryID})
+	}
+
+	return feed, nil
 }
 
 func (s *WalletService) Summary(ctx context.Context, userID, walletID uuid.UUID, filter model.ActivityFilter) (*model.WalletSummary, error) {

@@ -10,6 +10,17 @@ import (
 	"github.com/alice101-dev/ai-code-reviewer/internal/model"
 )
 
+const walletActivityColumns = `le.id AS entry_id,
+	le.transaction_id,
+	t.type,
+	le.direction,
+	le.amount,
+	le.balance_after,
+	t.currency,
+	t.description,
+	CASE WHEN le.direction = 'debit' THEN t.destination_wallet_id ELSE t.source_wallet_id END AS counterparty_wallet_id,
+	le.created_at`
+
 type TransactionRepository struct {
 	db *gorm.DB
 }
@@ -41,19 +52,29 @@ func (r *TransactionRepository) ListWalletActivity(ctx context.Context, walletID
 	var activities []model.WalletActivity
 	err := database.Conn(ctx, r.db).
 		Scopes(walletActivityScope(walletID, filter)).
-		Select(`le.id AS entry_id,
-			le.transaction_id,
-			t.type,
-			le.direction,
-			le.amount,
-			le.balance_after,
-			t.currency,
-			t.description,
-			CASE WHEN le.direction = 'debit' THEN t.destination_wallet_id ELSE t.source_wallet_id END AS counterparty_wallet_id,
-			le.created_at`).
+		Select(walletActivityColumns).
 		Order("le.created_at DESC, le.id DESC").
 		Limit(limit).
 		Offset(offset).
+		Scan(&activities).Error
+	if err != nil {
+		return nil, translate(err)
+	}
+	return activities, nil
+}
+
+func (r *TransactionRepository) ListWalletActivityBefore(ctx context.Context, walletID uuid.UUID, filter model.ActivityFilter, before *model.ActivityCursor, limit int) ([]model.WalletActivity, error) {
+	query := database.Conn(ctx, r.db).
+		Scopes(walletActivityScope(walletID, filter)).
+		Select(walletActivityColumns)
+	if before != nil {
+		query = query.Where("(le.created_at, le.id) < (?, ?)", before.CreatedAt, before.EntryID)
+	}
+
+	var activities []model.WalletActivity
+	err := query.
+		Order("le.created_at DESC, le.id DESC").
+		Limit(limit).
 		Scan(&activities).Error
 	if err != nil {
 		return nil, translate(err)

@@ -90,6 +90,7 @@ Base path: `/api/v1`. All amounts are integers in the currency's minor unit.
 | `GET` | `/wallets` | Bearer | List own wallets |
 | `GET` | `/wallets/{id}` | Bearer | Get a wallet |
 | `GET` | `/wallets/{id}/transactions` | Bearer | Paginated ledger entries, see [Transaction history](#transaction-history) |
+| `GET` | `/wallets/{id}/entries` | Bearer | Cursor-paginated ledger entries, see [Entry feed](#entry-feed) |
 | `GET` | `/wallets/{id}/summary` | Bearer | Aggregated totals for a wallet, see [Activity summary](#activity-summary) |
 | `POST` | `/wallets/{id}/topups` | Bearer | Top up a wallet, requires `Idempotency-Key` |
 | `POST` | `/transfers` | Bearer | Transfer between wallets, requires `Idempotency-Key` |
@@ -130,6 +131,23 @@ curl -s -X POST localhost:8080/api/v1/wallets/$WALLET/topups \
 
 ```bash
 curl -s "localhost:8080/api/v1/wallets/$WALLET/transactions?type=transfer&direction=debit&from=2026-10-01T00:00:00Z&to=2026-11-01T00:00:00Z" \
+  -H "Authorization: Bearer $TOKEN"
+```
+
+### Entry Feed
+
+`GET /wallets/{id}/entries` returns the same ledger entries as the transaction history, newest first, with keyset pagination for clients that sync a wallet incrementally or export a full statement. Unlike offset paging, pages do not shift when new entries are recorded while the client is scrolling, and deep pages cost the same as the first one.
+
+| Query parameter | Description |
+|---|---|
+| `cursor` | Opaque token from `meta.cursor.next_cursor` of the previous page; omit for the first page |
+| `limit` | Page size, defaults to `50`, capped at `200` |
+| `type`, `direction`, `from`, `to` | Same filters as the transaction history |
+
+`meta.cursor.has_more` is `false` on the last page, which carries no `next_cursor`. Keep the filters unchanged while following a cursor.
+
+```bash
+curl -s "localhost:8080/api/v1/wallets/$WALLET/entries?limit=100" \
   -H "Authorization: Bearer $TOKEN"
 ```
 

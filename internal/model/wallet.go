@@ -84,6 +84,11 @@ type ActivityFilter struct {
 	To        time.Time
 }
 
+type ActivityCursor struct {
+	CreatedAt time.Time
+	EntryID   uuid.UUID
+}
+
 type WalletSummary struct {
 	Currency         string
 	TotalCredits     int64

@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"strings"
 	"testing"
 	"time"
 
@@ -36,14 +37,16 @@ func (s stubTokens) Parse(string) (uuid.UUID, error) {
 }
 
 type fakeWalletService struct {
-	calls     int
-	gotUserID uuid.UUID
-	gotWallet uuid.UUID
-	gotFilter model.ActivityFilter
-	gotPage   service.Pagination
-	result    *service.ActivityPage
-	summary   *model.WalletSummary
-	err       error
+	calls       int
+	gotUserID   uuid.UUID
+	gotWallet   uuid.UUID
+	gotFilter   model.ActivityFilter
+	gotPage     service.Pagination
+	gotFeedPage service.CursorPage
+	result      *service.ActivityPage
+	feed        *service.ActivityFeed
+	summary     *model.WalletSummary
+	err         error
 }
 
 func (f *fakeWalletService) Create(context.Context, uuid.UUID, string) (*model.Wallet, error) {
@@ -71,6 +74,21 @@ func (f *fakeWalletService) ListActivity(_ context.Context, userID, walletID uui
 		return f.result, nil
 	}
 	return &service.ActivityPage{}, nil
+}
+
+func (f *fakeWalletService) ListActivityFeed(_ context.Context, userID, walletID uuid.UUID, filter model.ActivityFilter, page service.CursorPage) (*service.ActivityFeed, error) {
+	f.calls++
+	f.gotUserID = userID
+	f.gotWallet = walletID
+	f.gotFilter = filter
+	f.gotFeedPage = page
+	if f.err != nil {
+		return nil, f.err
+	}
+	if f.feed != nil {
+		return f.feed, nil
+	}
+	return &service.ActivityFeed{}, nil
 }
 
 func (f *fakeWalletService) Summary(_ context.Context, userID, walletID uuid.UUID, filter model.ActivityFilter) (*model.WalletSummary, error) {
@@ -408,6 +426,154 @@ func TestWalletHandler_SummaryMapsServiceErrors(t *testing.T) {
 			router := newTestRouter(t, uuid.New(), &fakeWalletService{err: tt.err})
 
 			status, body := getSummary(t, router, uuid.NewString(), nil)
+
+			assert.Equal(t, tt.wantStatus, status)
+			assert.Equal(t, tt.wantCode, body.Error.Code)
+			assert.NotContains(t, body.Error.Message, "connection reset")
+		})
+	}
+}
+
+type feedAPIResponse struct {
+	Data []map[string]any `json:"data"`
+	Meta struct {
+		Cursor struct {
+			NextCursor *string `json:"next_cursor"`
+			HasMore    bool    `json:"has_more"`
+		} `json:"cursor"`
+	} `json:"meta"`
+	Error struct {
+		Code    string `json:"code"`
+		Message string `json:"message"`
+		Details []struct {
+			Field string `json:"field"`
+			Rule  string `json:"rule"`
+		} `json:"details"`
+	} `json:"error"`
+}
+
+func getFeed(t *testing.T, router *gin.Engine, walletID string, query url.Values) (int, feedAPIResponse) {
+	t.Helper()
+
+	target := "/api/v1/wallets/" + walletID + "/entries"
+	if len(query) > 0 {
+		target += "?" + query.Encode()
+	}
+
+	req := httptest.NewRequestWithContext(t.Context(), http.MethodGet, target, nil)
+	req.Header.Set("Authorization", "Bearer test-token")
+	rec := httptest.NewRecorder()
+	router.ServeHTTP(rec, req)
+
+	var body feedAPIResponse
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &body))
+	return rec.Code, body
+}
+
+func TestWalletHandler_ListActivityFeedDefaults(t *testing.T) {
+	userID, walletID := uuid.New(), uuid.New()
+	wallets := &fakeWalletService{}
+	router := newTestRouter(t, userID, wallets)
+
+	status, body := getFeed(t, router, walletID.String(), nil)
+
+	require.Equal(t, http.StatusOK, status)
+	require.Equal(t, 1, wallets.calls)
+	assert.Equal(t, userID, wallets.gotUserID)
+	assert.Equal(t, walletID, wallets.gotWallet)
+	assert.Equal(t, model.ActivityFilter{}, wallets.gotFilter)
+	assert.Equal(t, service.CursorPage{Limit: 50}, wallets.gotFeedPage)
+	assert.Empty(t, body.Data)
+	assert.False(t, body.Meta.Cursor.HasMore)
+	assert.Nil(t, body.Meta.Cursor.NextCursor)
+}
+
+func TestWalletHandler_ListActivityFeedPassesCursorAndFilters(t *testing.T) {
+	wallets := &fakeWalletService{
+		feed: &service.ActivityFeed{
+			Items:      []model.WalletActivity{{EntryID: uuid.New(), Type: model.TransactionTypeTopUp, Direction: model.EntryDirectionCredit, Amount: 900}},
+			NextCursor: "next-page-token",
+		},
+	}
+	router := newTestRouter(t, uuid.New(), wallets)
+
+	status, body := getFeed(t, router, uuid.NewString(), url.Values{
+		"cursor":    {"current-page-token"},
+		"limit":     {"25"},
+		"type":      {"topup"},
+		"direction": {"credit"},
+		"from":      {"2026-10-01T07:00:00+07:00"},
+		"to":        {"2026-11-01T00:00:00Z"},
+	})
+
+	require.Equal(t, http.StatusOK, status)
+	assert.Equal(t, service.CursorPage{Cursor: "current-page-token", Limit: 25}, wallets.gotFeedPage)
+	assert.Equal(t, model.TransactionTypeTopUp, wallets.gotFilter.Type)
+	assert.Equal(t, model.EntryDirectionCredit, wallets.gotFilter.Direction)
+	assert.True(t, wallets.gotFilter.From.Equal(time.Date(2026, 10, 1, 0, 0, 0, 0, time.UTC)))
+	assert.True(t, wallets.gotFilter.To.Equal(time.Date(2026, 11, 1, 0, 0, 0, 0, time.UTC)))
+
+	require.Len(t, body.Data, 1)
+	assert.Equal(t, "credit", body.Data[0]["direction"])
+	assert.True(t, body.Meta.Cursor.HasMore)
+	require.NotNil(t, body.Meta.Cursor.NextCursor)
+	assert.Equal(t, "next-page-token", *body.Meta.Cursor.NextCursor)
+}
+
+func TestWalletHandler_ListActivityFeedRejectsInvalidQuery(t *testing.T) {
+	tests := map[string]struct {
+		walletID    string
+		query       url.Values
+		wantMessage string
+		wantField   string
+		wantRule    string
+	}{
+		"limit above max":   {walletID: uuid.NewString(), query: url.Values{"limit": {"201"}}, wantMessage: "request validation failed", wantField: "limit", wantRule: "max"},
+		"limit below min":   {walletID: uuid.NewString(), query: url.Values{"limit": {"0"}}, wantMessage: "request validation failed", wantField: "limit", wantRule: "min"},
+		"oversized cursor":  {walletID: uuid.NewString(), query: url.Values{"cursor": {strings.Repeat("a", 129)}}, wantMessage: "request validation failed", wantField: "cursor", wantRule: "max"},
+		"unknown type":      {walletID: uuid.NewString(), query: url.Values{"type": {"refund"}}, wantMessage: "request validation failed", wantField: "type", wantRule: "oneof"},
+		"malformed from":    {walletID: uuid.NewString(), query: url.Values{"from": {"yesterday"}}, wantMessage: "query parameters are malformed"},
+		"invalid wallet id": {walletID: "not-a-uuid", wantMessage: "wallet id must be a valid UUID"},
+	}
+
+	for name, tt := range tests {
+		t.Run(name, func(t *testing.T) {
+			wallets := &fakeWalletService{}
+			router := newTestRouter(t, uuid.New(), wallets)
+
+			status, body := getFeed(t, router, tt.walletID, tt.query)
+
+			assert.Equal(t, http.StatusBadRequest, status)
+			assert.Equal(t, "invalid_argument", body.Error.Code)
+			assert.Equal(t, tt.wantMessage, body.Error.Message)
+			assert.Zero(t, wallets.calls)
+
+			if tt.wantField != "" {
+				require.Len(t, body.Error.Details, 1)
+				assert.Equal(t, tt.wantField, body.Error.Details[0].Field)
+				assert.Equal(t, tt.wantRule, body.Error.Details[0].Rule)
+			}
+		})
+	}
+}
+
+func TestWalletHandler_ListActivityFeedMapsServiceErrors(t *testing.T) {
+	tests := map[string]struct {
+		err        error
+		wantStatus int
+		wantCode   string
+	}{
+		"invalid cursor":     {err: service.ErrInvalidCursor, wantStatus: http.StatusBadRequest, wantCode: "invalid_argument"},
+		"invalid time range": {err: service.ErrInvalidTimeRange, wantStatus: http.StatusBadRequest, wantCode: "invalid_argument"},
+		"wallet not found":   {err: service.ErrWalletNotFound, wantStatus: http.StatusNotFound, wantCode: "not_found"},
+		"unexpected error":   {err: errors.New("connection reset"), wantStatus: http.StatusInternalServerError, wantCode: "internal"},
+	}
+
+	for name, tt := range tests {
+		t.Run(name, func(t *testing.T) {
+			router := newTestRouter(t, uuid.New(), &fakeWalletService{err: tt.err})
+
+			status, body := getFeed(t, router, uuid.NewString(), nil)
 
 			assert.Equal(t, tt.wantStatus, status)
 			assert.Equal(t, tt.wantCode, body.Error.Code)

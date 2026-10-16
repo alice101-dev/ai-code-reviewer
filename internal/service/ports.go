@@ -40,6 +40,7 @@ type TransactionStore interface {
 	FindByIdempotencyKey(ctx context.Context, userID uuid.UUID, key string) (*model.Transaction, error)
 	CreateEntries(ctx context.Context, entries []model.LedgerEntry) error
 	ListWalletActivity(ctx context.Context, walletID uuid.UUID, filter model.ActivityFilter, limit, offset int) ([]model.WalletActivity, error)
+	ListWalletActivityBefore(ctx context.Context, walletID uuid.UUID, filter model.ActivityFilter, before *model.ActivityCursor, limit int) ([]model.WalletActivity, error)
 	CountWalletActivity(ctx context.Context, walletID uuid.UUID, filter model.ActivityFilter) (int64, error)
 	SummarizeWalletActivity(ctx context.Context, walletID uuid.UUID, filter model.ActivityFilter) (model.WalletSummary, error)
 }

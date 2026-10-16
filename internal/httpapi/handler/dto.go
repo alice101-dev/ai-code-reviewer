@@ -156,3 +156,17 @@ func newPaginationMeta(p service.Pagination, total int64) map[string]paginationM
 		},
 	}
 }
+
+type cursorMeta struct {
+	NextCursor string `json:"next_cursor,omitempty"`
+	HasMore    bool   `json:"has_more"`
+}
+
+func newCursorMeta(next string) map[string]cursorMeta {
+	return map[string]cursorMeta{
+		"cursor": {
+			NextCursor: next,
+			HasMore:    next != "",
+		},
+	}
+}

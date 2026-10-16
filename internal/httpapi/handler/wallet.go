@@ -17,6 +17,7 @@ type WalletService interface {
 	List(ctx context.Context, userID uuid.UUID) ([]model.Wallet, error)
 	Get(ctx context.Context, userID, walletID uuid.UUID) (*model.Wallet, error)
 	ListActivity(ctx context.Context, userID, walletID uuid.UUID, filter model.ActivityFilter, page service.Pagination) (*service.ActivityPage, error)
+	ListActivityFeed(ctx context.Context, userID, walletID uuid.UUID, filter model.ActivityFilter, page service.CursorPage) (*service.ActivityFeed, error)
 	Summary(ctx context.Context, userID, walletID uuid.UUID, filter model.ActivityFilter) (*model.WalletSummary, error)
 }
 
@@ -156,6 +157,55 @@ func (h *WalletHandler) ListActivity(c *gin.Context) {
 	}
 
 	response.OKWithMeta(c, items, newPaginationMeta(page, result.TotalItems))
+}
+
+type activityFeedQuery struct {
+	Cursor    string    `form:"cursor" binding:"max=128"`
+	Limit     int       `form:"limit,default=50" binding:"min=1,max=200"`
+	Type      string    `form:"type" binding:"omitempty,oneof=topup transfer"`
+	Direction string    `form:"direction" binding:"omitempty,oneof=debit credit"`
+	From      time.Time `form:"from"`
+	To        time.Time `form:"to"`
+}
+
+func (q activityFeedQuery) filter() model.ActivityFilter {
+	return model.ActivityFilter{
+		Type:      model.TransactionType(q.Type),
+		Direction: model.EntryDirection(q.Direction),
+		From:      q.From,
+		To:        q.To,
+	}
+}
+
+func (h *WalletHandler) ListActivityFeed(c *gin.Context) {
+	userID, ok := currentUserID(c)
+	if !ok {
+		return
+	}
+	walletID, ok := walletIDParam(c)
+	if !ok {
+		return
+	}
+
+	var query activityFeedQuery
+	if err := c.ShouldBindQuery(&query); err != nil {
+		response.QueryError(c, err)
+		return
+	}
+
+	page := service.CursorPage{Cursor: query.Cursor, Limit: query.Limit}
+	feed, err := h.wallets.ListActivityFeed(c.Request.Context(), userID, walletID, query.filter(), page)
+	if err != nil {
+		response.Error(c, err)
+		return
+	}
+
+	items := make([]activityResponse, 0, len(feed.Items))
+	for _, a := range feed.Items {
+		items = append(items, newActivityResponse(a))
+	}
+
+	response.OKWithMeta(c, items, newCursorMeta(feed.NextCursor))
 }
 
 type summaryQuery struct {
