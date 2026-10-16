@@ -90,6 +90,7 @@ Base path: `/api/v1`. All amounts are integers in the currency's minor unit.
 | `GET` | `/wallets` | Bearer | List own wallets |
 | `GET` | `/wallets/{id}` | Bearer | Get a wallet |
 | `GET` | `/wallets/{id}/transactions` | Bearer | Paginated ledger entries, see [Transaction history](#transaction-history) |
+| `GET` | `/wallets/{id}/summary` | Bearer | Aggregated totals for a wallet, see [Activity summary](#activity-summary) |
 | `POST` | `/wallets/{id}/topups` | Bearer | Top up a wallet, requires `Idempotency-Key` |
 | `POST` | `/transfers` | Bearer | Transfer between wallets, requires `Idempotency-Key` |
 | `GET` | `/healthz`, `/readyz` | – | Liveness and readiness probes (outside `/api/v1`) |
@@ -129,6 +130,23 @@ curl -s -X POST localhost:8080/api/v1/wallets/$WALLET/topups \
 
 ```bash
 curl -s "localhost:8080/api/v1/wallets/$WALLET/transactions?type=transfer&direction=debit&from=2026-10-01T00:00:00Z&to=2026-11-01T00:00:00Z" \
+  -H "Authorization: Bearer $TOKEN"
+```
+
+### Activity Summary
+
+`GET /wallets/{id}/summary` returns aggregated totals for a wallet over an optional period.
+
+| Query parameter | Description |
+|---|---|
+| `type` | `topup` or `transfer` |
+| `from` | RFC 3339 timestamp, inclusive lower bound on `created_at` |
+| `to` | RFC 3339 timestamp, exclusive upper bound on `created_at` |
+
+The response reports `total_credits`, `total_debits`, `net_change` and `transaction_count`. `net_change` is `total_credits - total_debits` in the currency's minor unit and is negative when debits exceed credits in the period.
+
+```bash
+curl -s "localhost:8080/api/v1/wallets/$WALLET/summary?from=2026-10-01T00:00:00Z&to=2026-11-01T00:00:00Z" \
   -H "Authorization: Bearer $TOKEN"
 ```
 

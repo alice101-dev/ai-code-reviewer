@@ -17,6 +17,7 @@ type WalletService interface {
 	List(ctx context.Context, userID uuid.UUID) ([]model.Wallet, error)
 	Get(ctx context.Context, userID, walletID uuid.UUID) (*model.Wallet, error)
 	ListActivity(ctx context.Context, userID, walletID uuid.UUID, filter model.ActivityFilter, page service.Pagination) (*service.ActivityPage, error)
+	Summary(ctx context.Context, userID, walletID uuid.UUID, filter model.ActivityFilter) (*model.WalletSummary, error)
 }
 
 type PaymentService interface {
@@ -155,6 +156,45 @@ func (h *WalletHandler) ListActivity(c *gin.Context) {
 	}
 
 	response.OKWithMeta(c, items, newPaginationMeta(page, result.TotalItems))
+}
+
+type summaryQuery struct {
+	Type string    `form:"type" binding:"omitempty,oneof=topup transfer"`
+	From time.Time `form:"from"`
+	To   time.Time `form:"to"`
+}
+
+func (q summaryQuery) filter() model.ActivityFilter {
+	return model.ActivityFilter{
+		Type: model.TransactionType(q.Type),
+		From: q.From,
+		To:   q.To,
+	}
+}
+
+func (h *WalletHandler) Summary(c *gin.Context) {
+	userID, ok := currentUserID(c)
+	if !ok {
+		return
+	}
+	walletID, ok := walletIDParam(c)
+	if !ok {
+		return
+	}
+
+	var query summaryQuery
+	if err := c.ShouldBindQuery(&query); err != nil {
+		response.QueryError(c, err)
+		return
+	}
+
+	summary, err := h.wallets.Summary(c.Request.Context(), userID, walletID, query.filter())
+	if err != nil {
+		response.Error(c, err)
+		return
+	}
+
+	response.OK(c, newSummaryResponse(summary))
 }
 
 func (h *WalletHandler) TopUp(c *gin.Context) {

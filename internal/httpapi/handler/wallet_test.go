@@ -42,6 +42,7 @@ type fakeWalletService struct {
 	gotFilter model.ActivityFilter
 	gotPage   service.Pagination
 	result    *service.ActivityPage
+	summary   *model.WalletSummary
 	err       error
 }
 
@@ -70,6 +71,20 @@ func (f *fakeWalletService) ListActivity(_ context.Context, userID, walletID uui
 		return f.result, nil
 	}
 	return &service.ActivityPage{}, nil
+}
+
+func (f *fakeWalletService) Summary(_ context.Context, userID, walletID uuid.UUID, filter model.ActivityFilter) (*model.WalletSummary, error) {
+	f.calls++
+	f.gotUserID = userID
+	f.gotWallet = walletID
+	f.gotFilter = filter
+	if f.err != nil {
+		return nil, f.err
+	}
+	if f.summary != nil {
+		return f.summary, nil
+	}
+	return &model.WalletSummary{Currency: "IDR"}, nil
 }
 
 type fakePaymentService struct{}
@@ -253,6 +268,146 @@ func TestWalletHandler_ListActivityMapsServiceErrors(t *testing.T) {
 			router := newTestRouter(t, uuid.New(), &fakeWalletService{err: tt.err})
 
 			status, body := getActivity(t, router, uuid.NewString(), nil)
+
+			assert.Equal(t, tt.wantStatus, status)
+			assert.Equal(t, tt.wantCode, body.Error.Code)
+			assert.NotContains(t, body.Error.Message, "connection reset")
+		})
+	}
+}
+
+type summaryAPIResponse struct {
+	Data struct {
+		Currency         string `json:"currency"`
+		TotalCredits     int64  `json:"total_credits"`
+		TotalDebits      int64  `json:"total_debits"`
+		NetChange        int64  `json:"net_change"`
+		TransactionCount int64  `json:"transaction_count"`
+	} `json:"data"`
+	Error struct {
+		Code    string `json:"code"`
+		Message string `json:"message"`
+		Details []struct {
+			Field string `json:"field"`
+			Rule  string `json:"rule"`
+		} `json:"details"`
+	} `json:"error"`
+}
+
+func getSummary(t *testing.T, router *gin.Engine, walletID string, query url.Values) (int, summaryAPIResponse) {
+	t.Helper()
+
+	target := "/api/v1/wallets/" + walletID + "/summary"
+	if len(query) > 0 {
+		target += "?" + query.Encode()
+	}
+
+	req := httptest.NewRequestWithContext(t.Context(), http.MethodGet, target, nil)
+	req.Header.Set("Authorization", "Bearer test-token")
+	rec := httptest.NewRecorder()
+	router.ServeHTTP(rec, req)
+
+	var body summaryAPIResponse
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &body))
+	return rec.Code, body
+}
+
+func TestWalletHandler_SummaryReturnsTotals(t *testing.T) {
+	userID, walletID := uuid.New(), uuid.New()
+	wallets := &fakeWalletService{
+		summary: &model.WalletSummary{
+			Currency:         "IDR",
+			TotalCredits:     100_000,
+			TotalDebits:      125_000,
+			NetChange:        -25_000,
+			TransactionCount: 3,
+		},
+	}
+	router := newTestRouter(t, userID, wallets)
+
+	status, body := getSummary(t, router, walletID.String(), url.Values{
+		"type": {"transfer"},
+		"from": {"2026-10-01T07:00:00+07:00"},
+		"to":   {"2026-11-01T00:00:00Z"},
+	})
+
+	require.Equal(t, http.StatusOK, status)
+	require.Equal(t, 1, wallets.calls)
+	assert.Equal(t, userID, wallets.gotUserID)
+	assert.Equal(t, walletID, wallets.gotWallet)
+	assert.Equal(t, model.TransactionTypeTransfer, wallets.gotFilter.Type)
+	assert.Empty(t, wallets.gotFilter.Direction)
+	assert.True(t, wallets.gotFilter.From.Equal(time.Date(2026, 10, 1, 0, 0, 0, 0, time.UTC)))
+	assert.True(t, wallets.gotFilter.To.Equal(time.Date(2026, 11, 1, 0, 0, 0, 0, time.UTC)))
+
+	assert.Equal(t, "IDR", body.Data.Currency)
+	assert.Equal(t, int64(100_000), body.Data.TotalCredits)
+	assert.Equal(t, int64(125_000), body.Data.TotalDebits)
+	assert.Equal(t, int64(-25_000), body.Data.NetChange)
+	assert.Equal(t, int64(3), body.Data.TransactionCount)
+}
+
+func TestWalletHandler_SummaryOmittedFilters(t *testing.T) {
+	wallets := &fakeWalletService{}
+	router := newTestRouter(t, uuid.New(), wallets)
+
+	status, _ := getSummary(t, router, uuid.NewString(), nil)
+
+	require.Equal(t, http.StatusOK, status)
+	assert.Equal(t, model.ActivityFilter{}, wallets.gotFilter)
+}
+
+func TestWalletHandler_SummaryRejectsInvalidRequests(t *testing.T) {
+	tests := map[string]struct {
+		walletID    string
+		query       url.Values
+		wantMessage string
+		wantField   string
+		wantRule    string
+	}{
+		"unknown type":      {walletID: uuid.NewString(), query: url.Values{"type": {"refund"}}, wantMessage: "request validation failed", wantField: "type", wantRule: "oneof"},
+		"malformed from":    {walletID: uuid.NewString(), query: url.Values{"from": {"yesterday"}}, wantMessage: "query parameters are malformed"},
+		"date without time": {walletID: uuid.NewString(), query: url.Values{"to": {"2026-10-01"}}, wantMessage: "query parameters are malformed"},
+		"invalid wallet id": {walletID: "not-a-uuid", wantMessage: "wallet id must be a valid UUID"},
+	}
+
+	for name, tt := range tests {
+		t.Run(name, func(t *testing.T) {
+			wallets := &fakeWalletService{}
+			router := newTestRouter(t, uuid.New(), wallets)
+
+			status, body := getSummary(t, router, tt.walletID, tt.query)
+
+			assert.Equal(t, http.StatusBadRequest, status)
+			assert.Equal(t, "invalid_argument", body.Error.Code)
+			assert.Equal(t, tt.wantMessage, body.Error.Message)
+			assert.Zero(t, wallets.calls)
+
+			if tt.wantField != "" {
+				require.Len(t, body.Error.Details, 1)
+				assert.Equal(t, tt.wantField, body.Error.Details[0].Field)
+				assert.Equal(t, tt.wantRule, body.Error.Details[0].Rule)
+			}
+		})
+	}
+}
+
+func TestWalletHandler_SummaryMapsServiceErrors(t *testing.T) {
+	tests := map[string]struct {
+		err        error
+		wantStatus int
+		wantCode   string
+	}{
+		"invalid time range": {err: service.ErrInvalidTimeRange, wantStatus: http.StatusBadRequest, wantCode: "invalid_argument"},
+		"wallet not found":   {err: service.ErrWalletNotFound, wantStatus: http.StatusNotFound, wantCode: "not_found"},
+		"unexpected error":   {err: errors.New("connection reset"), wantStatus: http.StatusInternalServerError, wantCode: "internal"},
+	}
+
+	for name, tt := range tests {
+		t.Run(name, func(t *testing.T) {
+			router := newTestRouter(t, uuid.New(), &fakeWalletService{err: tt.err})
+
+			status, body := getSummary(t, router, uuid.NewString(), nil)
 
 			assert.Equal(t, tt.wantStatus, status)
 			assert.Equal(t, tt.wantCode, body.Error.Code)

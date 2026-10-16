@@ -41,6 +41,7 @@ type TransactionStore interface {
 	CreateEntries(ctx context.Context, entries []model.LedgerEntry) error
 	ListWalletActivity(ctx context.Context, walletID uuid.UUID, filter model.ActivityFilter, limit, offset int) ([]model.WalletActivity, error)
 	CountWalletActivity(ctx context.Context, walletID uuid.UUID, filter model.ActivityFilter) (int64, error)
+	SummarizeWalletActivity(ctx context.Context, walletID uuid.UUID, filter model.ActivityFilter) (model.WalletSummary, error)
 }
 
 type PasswordHasher interface {

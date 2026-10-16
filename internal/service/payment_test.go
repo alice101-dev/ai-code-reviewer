@@ -537,3 +537,70 @@ func TestWalletService_ListActivityTimeBoundsAndPaging(t *testing.T) {
 		assert.Equal(t, []int64{5, 4, 3, 2}, seen)
 	})
 }
+
+func TestWalletService_Summary(t *testing.T) {
+	f := newPaymentFixture(t)
+	ctx := context.Background()
+
+	alice := f.createUser(t)
+	bob := f.createUser(t)
+	wallet := f.createWallet(t, alice.ID, "IDR", 100_000)
+	peer := f.createWallet(t, bob.ID, "IDR", 0)
+
+	_, err := f.paymentSvc.Transfer(ctx, service.TransferInput{
+		UserID: alice.ID, SourceWalletID: wallet.ID, DestinationWalletID: peer.ID, Amount: 25_000, IdempotencyKey: "summary-transfer",
+	})
+	require.NoError(t, err)
+
+	summary, err := f.walletSvc.Summary(ctx, alice.ID, wallet.ID, model.ActivityFilter{})
+	require.NoError(t, err)
+
+	assert.Equal(t, "IDR", summary.Currency)
+	assert.Equal(t, int64(100_000), summary.TotalCredits)
+	assert.Equal(t, int64(25_000), summary.TotalDebits)
+	assert.Equal(t, int64(2), summary.TransactionCount)
+	assert.Equal(t, int64(75_000), summary.NetChange)
+}
+
+func TestWalletService_SummaryFiltersByType(t *testing.T) {
+	f := newPaymentFixture(t)
+	ctx := context.Background()
+
+	alice := f.createUser(t)
+	bob := f.createUser(t)
+	wallet := f.createWallet(t, alice.ID, "IDR", 100_000)
+	peer := f.createWallet(t, bob.ID, "IDR", 0)
+
+	_, err := f.paymentSvc.Transfer(ctx, service.TransferInput{
+		UserID: alice.ID, SourceWalletID: wallet.ID, DestinationWalletID: peer.ID, Amount: 25_000, IdempotencyKey: "summary-type-transfer",
+	})
+	require.NoError(t, err)
+
+	topUps, err := f.walletSvc.Summary(ctx, alice.ID, wallet.ID, model.ActivityFilter{Type: model.TransactionTypeTopUp})
+	require.NoError(t, err)
+
+	assert.Equal(t, int64(100_000), topUps.TotalCredits)
+	assert.Equal(t, int64(0), topUps.TotalDebits)
+	assert.Equal(t, int64(100_000), topUps.NetChange)
+	assert.Equal(t, int64(1), topUps.TransactionCount)
+
+	transfers, err := f.walletSvc.Summary(ctx, alice.ID, wallet.ID, model.ActivityFilter{Type: model.TransactionTypeTransfer})
+	require.NoError(t, err)
+
+	assert.Equal(t, int64(0), transfers.TotalCredits)
+	assert.Equal(t, int64(25_000), transfers.TotalDebits)
+	assert.Equal(t, int64(-25_000), transfers.NetChange)
+	assert.Equal(t, int64(1), transfers.TransactionCount)
+}
+
+func TestWalletService_SummaryRequiresOwnership(t *testing.T) {
+	f := newPaymentFixture(t)
+	ctx := context.Background()
+
+	alice := f.createUser(t)
+	bob := f.createUser(t)
+	wallet := f.createWallet(t, alice.ID, "IDR", 1_000)
+
+	_, err := f.walletSvc.Summary(ctx, bob.ID, wallet.ID, model.ActivityFilter{})
+	require.ErrorIs(t, err, service.ErrWalletNotFound)
+}

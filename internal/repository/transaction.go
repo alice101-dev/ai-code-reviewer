@@ -72,6 +72,29 @@ func (r *TransactionRepository) CountWalletActivity(ctx context.Context, walletI
 	return total, nil
 }
 
+func (r *TransactionRepository) SummarizeWalletActivity(ctx context.Context, walletID uuid.UUID, filter model.ActivityFilter) (model.WalletSummary, error) {
+	var row struct {
+		Credits int64
+		Debits  int64
+		Count   int64
+	}
+	err := database.Conn(ctx, r.db).
+		Scopes(walletActivityScope(walletID, filter)).
+		Select(`COALESCE(SUM(CASE WHEN le.direction = 'credit' THEN le.amount ELSE 0 END), 0) AS credits,
+			COALESCE(SUM(CASE WHEN le.direction = 'debit' THEN le.amount ELSE 0 END), 0) AS debits,
+			COUNT(*) AS count`).
+		Scan(&row).Error
+	if err != nil {
+		return model.WalletSummary{}, translate(err)
+	}
+
+	return model.WalletSummary{
+		TotalCredits:     row.Credits,
+		TotalDebits:      row.Debits,
+		TransactionCount: row.Count,
+	}, nil
+}
+
 func walletActivityScope(walletID uuid.UUID, filter model.ActivityFilter) func(*gorm.DB) *gorm.DB {
 	return func(db *gorm.DB) *gorm.DB {
 		db = db.Table("ledger_entries AS le").
