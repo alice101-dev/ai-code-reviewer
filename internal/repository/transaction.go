@@ -37,10 +37,10 @@ func (r *TransactionRepository) CreateEntries(ctx context.Context, entries []mod
 	return translate(database.Conn(ctx, r.db).Create(&entries).Error)
 }
 
-func (r *TransactionRepository) ListWalletActivity(ctx context.Context, walletID uuid.UUID, limit, offset int) ([]model.WalletActivity, error) {
+func (r *TransactionRepository) ListWalletActivity(ctx context.Context, walletID uuid.UUID, filter model.ActivityFilter, limit, offset int) ([]model.WalletActivity, error) {
 	var activities []model.WalletActivity
 	err := database.Conn(ctx, r.db).
-		Table("ledger_entries AS le").
+		Scopes(walletActivityScope(walletID, filter)).
 		Select(`le.id AS entry_id,
 			le.transaction_id,
 			t.type,
@@ -51,8 +51,6 @@ func (r *TransactionRepository) ListWalletActivity(ctx context.Context, walletID
 			t.description,
 			CASE WHEN le.direction = 'debit' THEN t.destination_wallet_id ELSE t.source_wallet_id END AS counterparty_wallet_id,
 			le.created_at`).
-		Joins("JOIN transactions AS t ON t.id = le.transaction_id").
-		Where("le.wallet_id = ?", walletID).
 		Order("le.created_at DESC, le.id DESC").
 		Limit(limit).
 		Offset(offset).
@@ -63,14 +61,36 @@ func (r *TransactionRepository) ListWalletActivity(ctx context.Context, walletID
 	return activities, nil
 }
 
-func (r *TransactionRepository) CountWalletActivity(ctx context.Context, walletID uuid.UUID) (int64, error) {
+func (r *TransactionRepository) CountWalletActivity(ctx context.Context, walletID uuid.UUID, filter model.ActivityFilter) (int64, error) {
 	var total int64
 	err := database.Conn(ctx, r.db).
-		Model(&model.LedgerEntry{}).
-		Where("wallet_id = ?", walletID).
+		Scopes(walletActivityScope(walletID, filter)).
 		Count(&total).Error
 	if err != nil {
 		return 0, translate(err)
 	}
 	return total, nil
+}
+
+func walletActivityScope(walletID uuid.UUID, filter model.ActivityFilter) func(*gorm.DB) *gorm.DB {
+	return func(db *gorm.DB) *gorm.DB {
+		db = db.Table("ledger_entries AS le").
+			Joins("JOIN transactions AS t ON t.id = le.transaction_id").
+			Where("le.wallet_id = ?", walletID)
+
+		if filter.Type != "" {
+			db = db.Where("t.type = ?", filter.Type)
+		}
+		if filter.Direction != "" {
+			db = db.Where("le.direction = ?", filter.Direction)
+		}
+		if !filter.From.IsZero() {
+			db = db.Where("le.created_at >= ?", filter.From)
+		}
+		if !filter.To.IsZero() {
+			db = db.Where("le.created_at < ?", filter.To)
+		}
+
+		return db
+	}
 }

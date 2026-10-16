@@ -2,6 +2,7 @@ package handler
 
 import (
 	"context"
+	"time"
 
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
@@ -15,7 +16,7 @@ type WalletService interface {
 	Create(ctx context.Context, userID uuid.UUID, currency string) (*model.Wallet, error)
 	List(ctx context.Context, userID uuid.UUID) ([]model.Wallet, error)
 	Get(ctx context.Context, userID, walletID uuid.UUID) (*model.Wallet, error)
-	ListActivity(ctx context.Context, userID, walletID uuid.UUID, page service.Pagination) (*service.ActivityPage, error)
+	ListActivity(ctx context.Context, userID, walletID uuid.UUID, filter model.ActivityFilter, page service.Pagination) (*service.ActivityPage, error)
 }
 
 type PaymentService interface {
@@ -48,8 +49,21 @@ type transferRequest struct {
 }
 
 type listActivityQuery struct {
-	Page     int `form:"page,default=1" binding:"min=1"`
-	PageSize int `form:"page_size,default=20" binding:"min=1,max=100"`
+	Page      int       `form:"page,default=1" binding:"min=1"`
+	PageSize  int       `form:"page_size,default=20" binding:"min=1,max=100"`
+	Type      string    `form:"type" binding:"omitempty,oneof=topup transfer"`
+	Direction string    `form:"direction" binding:"omitempty,oneof=debit credit"`
+	From      time.Time `form:"from"`
+	To        time.Time `form:"to"`
+}
+
+func (q listActivityQuery) filter() model.ActivityFilter {
+	return model.ActivityFilter{
+		Type:      model.TransactionType(q.Type),
+		Direction: model.EntryDirection(q.Direction),
+		From:      q.From,
+		To:        q.To,
+	}
 }
 
 func (h *WalletHandler) Create(c *gin.Context) {
@@ -124,12 +138,12 @@ func (h *WalletHandler) ListActivity(c *gin.Context) {
 
 	var query listActivityQuery
 	if err := c.ShouldBindQuery(&query); err != nil {
-		response.BindError(c, err)
+		response.QueryError(c, err)
 		return
 	}
 
 	page := service.Pagination{Page: query.Page, PageSize: query.PageSize}
-	result, err := h.wallets.ListActivity(c.Request.Context(), userID, walletID, page)
+	result, err := h.wallets.ListActivity(c.Request.Context(), userID, walletID, query.filter(), page)
 	if err != nil {
 		response.Error(c, err)
 		return

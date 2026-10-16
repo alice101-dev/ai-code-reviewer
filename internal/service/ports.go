@@ -39,8 +39,8 @@ type TransactionStore interface {
 	Create(ctx context.Context, txn *model.Transaction) error
 	FindByIdempotencyKey(ctx context.Context, userID uuid.UUID, key string) (*model.Transaction, error)
 	CreateEntries(ctx context.Context, entries []model.LedgerEntry) error
-	ListWalletActivity(ctx context.Context, walletID uuid.UUID, limit, offset int) ([]model.WalletActivity, error)
-	CountWalletActivity(ctx context.Context, walletID uuid.UUID) (int64, error)
+	ListWalletActivity(ctx context.Context, walletID uuid.UUID, filter model.ActivityFilter, limit, offset int) ([]model.WalletActivity, error)
+	CountWalletActivity(ctx context.Context, walletID uuid.UUID, filter model.ActivityFilter) (int64, error)
 }
 
 type PasswordHasher interface {

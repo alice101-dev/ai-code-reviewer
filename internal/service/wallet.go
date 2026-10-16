@@ -86,17 +86,21 @@ func (s *WalletService) Get(ctx context.Context, userID, walletID uuid.UUID) (*m
 	return wallet, nil
 }
 
-func (s *WalletService) ListActivity(ctx context.Context, userID, walletID uuid.UUID, page Pagination) (*ActivityPage, error) {
+func (s *WalletService) ListActivity(ctx context.Context, userID, walletID uuid.UUID, filter model.ActivityFilter, page Pagination) (*ActivityPage, error) {
+	if !filter.From.IsZero() && !filter.To.IsZero() && !filter.From.Before(filter.To) {
+		return nil, ErrInvalidTimeRange
+	}
+
 	if _, err := s.Get(ctx, userID, walletID); err != nil {
 		return nil, err
 	}
 
-	total, err := s.transactions.CountWalletActivity(ctx, walletID)
+	total, err := s.transactions.CountWalletActivity(ctx, walletID, filter)
 	if err != nil {
 		return nil, fmt.Errorf("count wallet activity: %w", err)
 	}
 
-	items, err := s.transactions.ListWalletActivity(ctx, walletID, page.PageSize, page.Offset())
+	items, err := s.transactions.ListWalletActivity(ctx, walletID, filter, page.PageSize, page.Offset())
 	if err != nil {
 		return nil, fmt.Errorf("list wallet activity: %w", err)
 	}

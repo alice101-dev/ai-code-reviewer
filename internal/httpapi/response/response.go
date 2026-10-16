@@ -71,6 +71,14 @@ func Error(c *gin.Context, err error) {
 }
 
 func BindError(c *gin.Context, err error) {
+	bindError(c, err, "request body is malformed")
+}
+
+func QueryError(c *gin.Context, err error) {
+	bindError(c, err, "query parameters are malformed")
+}
+
+func bindError(c *gin.Context, err error, malformedMessage string) {
 	var (
 		maxBytesErr    *http.MaxBytesError
 		validationErrs validator.ValidationErrors
@@ -95,7 +103,7 @@ func BindError(c *gin.Context, err error) {
 	default:
 		abort(c, http.StatusBadRequest, ErrorBody{
 			Code:    apperror.CodeInvalidArgument,
-			Message: "request body is malformed",
+			Message: malformedMessage,
 		})
 	}
 }
