@@ -72,6 +72,17 @@ func (f *fakeWalletService) ListActivity(_ context.Context, userID, walletID uui
 	return &service.ActivityPage{}, nil
 }
 
+func (f *fakeWalletService) Summary(_ context.Context, userID, walletID uuid.UUID, filter model.ActivityFilter) (*model.WalletSummary, error) {
+	f.calls++
+	f.gotUserID = userID
+	f.gotWallet = walletID
+	f.gotFilter = filter
+	if f.err != nil {
+		return nil, f.err
+	}
+	return &model.WalletSummary{Currency: "IDR"}, nil
+}
+
 type fakePaymentService struct{}
 
 func (fakePaymentService) TopUp(context.Context, service.TopUpInput) (*service.PaymentResult, error) {

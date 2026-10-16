@@ -120,6 +120,24 @@ func newActivityResponse(a model.WalletActivity) activityResponse {
 	}
 }
 
+type summaryResponse struct {
+	Currency         string `json:"currency"`
+	TotalCredits     int64  `json:"total_credits"`
+	TotalDebits      int64  `json:"total_debits"`
+	NetChange        int64  `json:"net_change"`
+	TransactionCount int64  `json:"transaction_count"`
+}
+
+func newSummaryResponse(s *model.WalletSummary) summaryResponse {
+	return summaryResponse{
+		Currency:         s.Currency,
+		TotalCredits:     s.TotalCredits,
+		TotalDebits:      s.TotalDebits,
+		NetChange:        s.NetChange,
+		TransactionCount: s.TransactionCount,
+	}
+}
+
 type paginationMeta struct {
 	Page       int   `json:"page"`
 	PageSize   int   `json:"page_size"`

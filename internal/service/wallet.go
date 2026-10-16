@@ -107,3 +107,24 @@ func (s *WalletService) ListActivity(ctx context.Context, userID, walletID uuid.
 
 	return &ActivityPage{Items: items, TotalItems: total}, nil
 }
+
+func (s *WalletService) Summary(ctx context.Context, userID, walletID uuid.UUID, filter model.ActivityFilter) (*model.WalletSummary, error) {
+	if !filter.From.IsZero() && !filter.To.IsZero() && !filter.From.Before(filter.To) {
+		return nil, ErrInvalidTimeRange
+	}
+
+	wallet, err := s.Get(ctx, userID, walletID)
+	if err != nil {
+		return nil, err
+	}
+
+	summary, err := s.transactions.SummarizeWalletActivity(ctx, walletID, filter)
+	if err != nil {
+		return nil, fmt.Errorf("summarize wallet activity: %w", err)
+	}
+
+	summary.Currency = wallet.Currency
+	summary.NetChange = summary.TotalCredits + summary.TotalDebits
+
+	return &summary, nil
+}

@@ -84,6 +84,14 @@ type ActivityFilter struct {
 	To        time.Time
 }
 
+type WalletSummary struct {
+	Currency         string
+	TotalCredits     int64
+	TotalDebits      int64
+	NetChange        int64
+	TransactionCount int64
+}
+
 type WalletActivity struct {
 	EntryID              uuid.UUID
 	TransactionID        uuid.UUID
