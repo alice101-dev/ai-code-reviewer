@@ -92,6 +92,7 @@ Base path: `/api/v1`. All amounts are integers in the currency's minor unit.
 | `GET` | `/wallets/{id}/transactions` | Bearer | Paginated ledger entries, see [Transaction history](#transaction-history) |
 | `GET` | `/wallets/{id}/summary` | Bearer | Aggregated totals for a wallet, see [Activity summary](#activity-summary) |
 | `POST` | `/wallets/{id}/topups` | Bearer | Top up a wallet, requires `Idempotency-Key` |
+| `POST` | `/wallets/{id}/close` | Bearer | Close an empty wallet, see [Closing a wallet](#closing-a-wallet) |
 | `POST` | `/transfers` | Bearer | Transfer between wallets, requires `Idempotency-Key` |
 | `GET` | `/healthz`, `/readyz` | – | Liveness and readiness probes (outside `/api/v1`) |
 
@@ -149,6 +150,10 @@ The response reports `total_credits`, `total_debits`, `net_change` and `transact
 curl -s "localhost:8080/api/v1/wallets/$WALLET/summary?from=2026-10-01T00:00:00Z&to=2026-11-01T00:00:00Z" \
   -H "Authorization: Bearer $TOKEN"
 ```
+
+### Closing a Wallet
+
+`POST /wallets/{id}/close` permanently closes a wallet owned by the caller. Only active wallets with a zero balance can be closed; a wallet that still holds funds is rejected with `422 Unprocessable Entity`. Closed wallets can no longer receive top-ups or transfers.
 
 ### Idempotency
 

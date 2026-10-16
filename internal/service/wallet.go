@@ -27,18 +27,20 @@ type ActivityPage struct {
 }
 
 type WalletService struct {
+	tx           TxRunner
 	wallets      WalletStore
 	transactions TransactionStore
 	currencies   map[string]struct{}
 }
 
-func NewWalletService(wallets WalletStore, transactions TransactionStore, supportedCurrencies []string) *WalletService {
+func NewWalletService(tx TxRunner, wallets WalletStore, transactions TransactionStore, supportedCurrencies []string) *WalletService {
 	currencies := make(map[string]struct{}, len(supportedCurrencies))
 	for _, c := range supportedCurrencies {
 		currencies[strings.ToUpper(c)] = struct{}{}
 	}
 
 	return &WalletService{
+		tx:           tx,
 		wallets:      wallets,
 		transactions: transactions,
 		currencies:   currencies,
@@ -127,4 +129,33 @@ func (s *WalletService) Summary(ctx context.Context, userID, walletID uuid.UUID,
 	summary.NetChange = summary.TotalCredits - summary.TotalDebits
 
 	return &summary, nil
+}
+
+func (s *WalletService) Close(ctx context.Context, userID, walletID uuid.UUID) (*model.Wallet, error) {
+	wallet, err := s.Get(ctx, userID, walletID)
+	if err != nil {
+		return nil, err
+	}
+	if !wallet.IsActive() {
+		return nil, ErrWalletNotActive
+	}
+
+	err = s.tx.WithinTransaction(ctx, func(ctx context.Context) error {
+		if _, err := s.wallets.LockByIDs(ctx, wallet.ID); err != nil {
+			return fmt.Errorf("lock wallet: %w", err)
+		}
+		if wallet.Balance != 0 {
+			return ErrWalletHasBalance
+		}
+		if err := s.wallets.UpdateStatus(ctx, wallet.ID, model.WalletStatusClosed); err != nil {
+			return fmt.Errorf("close wallet: %w", err)
+		}
+		return nil
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	wallet.Status = model.WalletStatusClosed
+	return wallet, nil
 }

@@ -43,13 +43,15 @@ func newPaymentFixture(t *testing.T) *paymentFixture {
 	wallets := repository.NewWalletRepository(db)
 	transactions := repository.NewTransactionRepository(db)
 
+	txManager := database.NewTxManager(db)
+
 	return &paymentFixture{
 		db:           db,
 		users:        users,
 		wallets:      wallets,
 		transactions: transactions,
-		walletSvc:    service.NewWalletService(wallets, transactions, []string{"IDR", "USD"}),
-		paymentSvc:   service.NewPaymentService(database.NewTxManager(db), wallets, transactions, testLimits),
+		walletSvc:    service.NewWalletService(txManager, wallets, transactions, []string{"IDR", "USD"}),
+		paymentSvc:   service.NewPaymentService(txManager, wallets, transactions, testLimits),
 	}
 }
 
@@ -603,4 +605,59 @@ func TestWalletService_SummaryRequiresOwnership(t *testing.T) {
 
 	_, err := f.walletSvc.Summary(ctx, bob.ID, wallet.ID, model.ActivityFilter{})
 	require.ErrorIs(t, err, service.ErrWalletNotFound)
+}
+
+func TestWalletService_CloseZeroBalanceWallet(t *testing.T) {
+	f := newPaymentFixture(t)
+	ctx := context.Background()
+
+	alice := f.createUser(t)
+	wallet := f.createWallet(t, alice.ID, "IDR", 0)
+
+	closed, err := f.walletSvc.Close(ctx, alice.ID, wallet.ID)
+	require.NoError(t, err)
+	assert.Equal(t, model.WalletStatusClosed, closed.Status)
+
+	stored, err := f.walletSvc.Get(ctx, alice.ID, wallet.ID)
+	require.NoError(t, err)
+	assert.Equal(t, model.WalletStatusClosed, stored.Status)
+
+	_, err = f.paymentSvc.TopUp(ctx, service.TopUpInput{
+		UserID: alice.ID, WalletID: wallet.ID, Amount: 1_000, IdempotencyKey: "topup-after-close",
+	})
+	require.ErrorIs(t, err, service.ErrWalletNotActive)
+}
+
+func TestWalletService_CloseRejectsWalletWithBalance(t *testing.T) {
+	f := newPaymentFixture(t)
+	ctx := context.Background()
+
+	alice := f.createUser(t)
+	wallet := f.createWallet(t, alice.ID, "IDR", 1_000)
+
+	_, err := f.walletSvc.Close(ctx, alice.ID, wallet.ID)
+	require.ErrorIs(t, err, service.ErrWalletHasBalance)
+
+	stored, err := f.walletSvc.Get(ctx, alice.ID, wallet.ID)
+	require.NoError(t, err)
+	assert.Equal(t, model.WalletStatusActive, stored.Status)
+	assert.Equal(t, int64(1_000), stored.Balance)
+}
+
+func TestWalletService_CloseRequiresOwnershipAndActiveWallet(t *testing.T) {
+	f := newPaymentFixture(t)
+	ctx := context.Background()
+
+	alice := f.createUser(t)
+	bob := f.createUser(t)
+	wallet := f.createWallet(t, alice.ID, "IDR", 0)
+
+	_, err := f.walletSvc.Close(ctx, bob.ID, wallet.ID)
+	require.ErrorIs(t, err, service.ErrWalletNotFound)
+
+	_, err = f.walletSvc.Close(ctx, alice.ID, wallet.ID)
+	require.NoError(t, err)
+
+	_, err = f.walletSvc.Close(ctx, alice.ID, wallet.ID)
+	require.ErrorIs(t, err, service.ErrWalletNotActive)
 }

@@ -87,6 +87,16 @@ func (f *fakeWalletService) Summary(_ context.Context, userID, walletID uuid.UUI
 	return &model.WalletSummary{Currency: "IDR"}, nil
 }
 
+func (f *fakeWalletService) Close(_ context.Context, userID, walletID uuid.UUID) (*model.Wallet, error) {
+	f.calls++
+	f.gotUserID = userID
+	f.gotWallet = walletID
+	if f.err != nil {
+		return nil, f.err
+	}
+	return &model.Wallet{ID: walletID, UserID: userID, Currency: "IDR", Status: model.WalletStatusClosed}, nil
+}
+
 type fakePaymentService struct{}
 
 func (fakePaymentService) TopUp(context.Context, service.TopUpInput) (*service.PaymentResult, error) {
@@ -412,6 +422,74 @@ func TestWalletHandler_SummaryMapsServiceErrors(t *testing.T) {
 			assert.Equal(t, tt.wantStatus, status)
 			assert.Equal(t, tt.wantCode, body.Error.Code)
 			assert.NotContains(t, body.Error.Message, "connection reset")
+		})
+	}
+}
+
+func postClose(t *testing.T, router *gin.Engine, walletID string) (int, map[string]any) {
+	t.Helper()
+
+	req := httptest.NewRequestWithContext(t.Context(), http.MethodPost, "/api/v1/wallets/"+walletID+"/close", nil)
+	req.Header.Set("Authorization", "Bearer test-token")
+	rec := httptest.NewRecorder()
+	router.ServeHTTP(rec, req)
+
+	var body map[string]any
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &body))
+	return rec.Code, body
+}
+
+func TestWalletHandler_CloseReturnsClosedWallet(t *testing.T) {
+	userID, walletID := uuid.New(), uuid.New()
+	wallets := &fakeWalletService{}
+	router := newTestRouter(t, userID, wallets)
+
+	status, body := postClose(t, router, walletID.String())
+
+	require.Equal(t, http.StatusOK, status)
+	require.Equal(t, 1, wallets.calls)
+	assert.Equal(t, userID, wallets.gotUserID)
+	assert.Equal(t, walletID, wallets.gotWallet)
+
+	data, ok := body["data"].(map[string]any)
+	require.True(t, ok)
+	assert.Equal(t, walletID.String(), data["id"])
+	assert.Equal(t, "closed", data["status"])
+}
+
+func TestWalletHandler_CloseRejectsInvalidWalletID(t *testing.T) {
+	wallets := &fakeWalletService{}
+	router := newTestRouter(t, uuid.New(), wallets)
+
+	status, _ := postClose(t, router, "not-a-uuid")
+
+	assert.Equal(t, http.StatusBadRequest, status)
+	assert.Zero(t, wallets.calls)
+}
+
+func TestWalletHandler_CloseMapsServiceErrors(t *testing.T) {
+	tests := map[string]struct {
+		err        error
+		wantStatus int
+		wantCode   string
+	}{
+		"wallet has balance": {err: service.ErrWalletHasBalance, wantStatus: http.StatusUnprocessableEntity, wantCode: "unprocessable_entity"},
+		"wallet not active":  {err: service.ErrWalletNotActive, wantStatus: http.StatusUnprocessableEntity, wantCode: "unprocessable_entity"},
+		"wallet not found":   {err: service.ErrWalletNotFound, wantStatus: http.StatusNotFound, wantCode: "not_found"},
+		"unexpected error":   {err: errors.New("connection reset"), wantStatus: http.StatusInternalServerError, wantCode: "internal"},
+	}
+
+	for name, tt := range tests {
+		t.Run(name, func(t *testing.T) {
+			router := newTestRouter(t, uuid.New(), &fakeWalletService{err: tt.err})
+
+			status, body := postClose(t, router, uuid.NewString())
+
+			assert.Equal(t, tt.wantStatus, status)
+			errBody, ok := body["error"].(map[string]any)
+			require.True(t, ok)
+			assert.Equal(t, tt.wantCode, errBody["code"])
+			assert.NotContains(t, errBody["message"], "connection reset")
 		})
 	}
 }

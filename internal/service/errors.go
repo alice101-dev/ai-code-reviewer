@@ -22,4 +22,5 @@ var (
 	ErrBalanceLimitExceeded      = apperror.New(apperror.CodeUnprocessable, "wallet balance limit exceeded")
 	ErrIdempotencyKeyReused      = apperror.New(apperror.CodeConflict, "idempotency key was already used for a different request")
 	ErrInvalidTimeRange          = apperror.New(apperror.CodeInvalidArgument, "from must be earlier than to")
+	ErrWalletHasBalance          = apperror.New(apperror.CodeUnprocessable, "wallet balance must be zero before it can be closed")
 )

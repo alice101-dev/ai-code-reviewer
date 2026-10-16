@@ -106,6 +106,7 @@ func NewRouter(deps RouterDeps) (*gin.Engine, error) {
 		protected.GET("/wallets/:id/transactions", h.Wallet.ListActivity)
 		protected.GET("/wallets/:id/summary", h.Wallet.Summary)
 		protected.POST("/wallets/:id/topups", h.Wallet.TopUp)
+		protected.POST("/wallets/:id/close", h.Wallet.Close)
 
 		protected.POST("/transfers", h.Wallet.Transfer)
 	}
