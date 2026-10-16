@@ -89,7 +89,7 @@ Base path: `/api/v1`. All amounts are integers in the currency's minor unit.
 | `POST` | `/wallets` | Bearer | Open a wallet for a currency |
 | `GET` | `/wallets` | Bearer | List own wallets |
 | `GET` | `/wallets/{id}` | Bearer | Get a wallet |
-| `GET` | `/wallets/{id}/transactions` | Bearer | Paginated ledger entries (`page`, `page_size`) |
+| `GET` | `/wallets/{id}/transactions` | Bearer | Paginated ledger entries, see [Transaction history](#transaction-history) |
 | `POST` | `/wallets/{id}/topups` | Bearer | Top up a wallet, requires `Idempotency-Key` |
 | `POST` | `/transfers` | Bearer | Transfer between wallets, requires `Idempotency-Key` |
 | `GET` | `/healthz`, `/readyz` | – | Liveness and readiness probes (outside `/api/v1`) |
@@ -113,6 +113,23 @@ curl -s -X POST localhost:8080/api/v1/wallets/$WALLET/topups \
   -H "Authorization: Bearer $TOKEN" -H 'Content-Type: application/json' \
   -H "Idempotency-Key: $(uuidgen)" \
   -d '{"amount":150000}'
+```
+
+### Transaction History
+
+`GET /wallets/{id}/transactions` returns ledger entries for the wallet, newest first.
+
+| Query parameter | Description |
+|---|---|
+| `page`, `page_size` | Pagination, defaults to `1` and `20`; `page_size` is capped at `100` |
+| `type` | `topup` or `transfer` |
+| `direction` | `debit` or `credit` |
+| `from` | RFC 3339 timestamp, inclusive lower bound on `created_at` |
+| `to` | RFC 3339 timestamp, exclusive upper bound on `created_at` |
+
+```bash
+curl -s "localhost:8080/api/v1/wallets/$WALLET/transactions?type=transfer&direction=debit&from=2026-10-01T00:00:00Z&to=2026-11-01T00:00:00Z" \
+  -H "Authorization: Bearer $TOKEN"
 ```
 
 ### Idempotency

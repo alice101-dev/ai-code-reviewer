@@ -77,6 +77,13 @@ func (LedgerEntry) TableName() string {
 	return "ledger_entries"
 }
 
+type ActivityFilter struct {
+	Type      TransactionType
+	Direction EntryDirection
+	From      time.Time
+	To        time.Time
+}
+
 type WalletActivity struct {
 	EntryID              uuid.UUID
 	TransactionID        uuid.UUID
