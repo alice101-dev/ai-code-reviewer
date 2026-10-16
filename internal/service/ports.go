@@ -33,6 +33,7 @@ type WalletStore interface {
 	ListByUser(ctx context.Context, userID uuid.UUID) ([]model.Wallet, error)
 	LockByIDs(ctx context.Context, ids ...uuid.UUID) ([]model.Wallet, error)
 	UpdateBalance(ctx context.Context, id uuid.UUID, balance int64) error
+	UpdateStatus(ctx context.Context, id uuid.UUID, status model.WalletStatus) error
 }
 
 type TransactionStore interface {

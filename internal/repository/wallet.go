@@ -73,6 +73,20 @@ func (r *WalletRepository) UpdateBalance(ctx context.Context, id uuid.UUID, bala
 	return nil
 }
 
+func (r *WalletRepository) UpdateStatus(ctx context.Context, id uuid.UUID, status model.WalletStatus) error {
+	result := database.Conn(ctx, r.db).
+		Model(&model.Wallet{}).
+		Where("id = ?", id).
+		Update("status", status)
+	if result.Error != nil {
+		return translate(result.Error)
+	}
+	if result.RowsAffected == 0 {
+		return ErrNotFound
+	}
+	return nil
+}
+
 func lockForUpdate() clause.Locking {
 	return clause.Locking{Strength: clause.LockingStrengthUpdate}
 }

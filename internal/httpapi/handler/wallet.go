@@ -18,6 +18,7 @@ type WalletService interface {
 	Get(ctx context.Context, userID, walletID uuid.UUID) (*model.Wallet, error)
 	ListActivity(ctx context.Context, userID, walletID uuid.UUID, filter model.ActivityFilter, page service.Pagination) (*service.ActivityPage, error)
 	Summary(ctx context.Context, userID, walletID uuid.UUID, filter model.ActivityFilter) (*model.WalletSummary, error)
+	Close(ctx context.Context, userID, walletID uuid.UUID) (*model.Wallet, error)
 }
 
 type PaymentService interface {
@@ -156,6 +157,25 @@ func (h *WalletHandler) ListActivity(c *gin.Context) {
 	}
 
 	response.OKWithMeta(c, items, newPaginationMeta(page, result.TotalItems))
+}
+
+func (h *WalletHandler) Close(c *gin.Context) {
+	userID, ok := currentUserID(c)
+	if !ok {
+		return
+	}
+	walletID, ok := walletIDParam(c)
+	if !ok {
+		return
+	}
+
+	wallet, err := h.wallets.Close(c.Request.Context(), userID, walletID)
+	if err != nil {
+		response.Error(c, err)
+		return
+	}
+
+	response.OK(c, newWalletResponse(wallet))
 }
 
 type summaryQuery struct {

@@ -53,7 +53,7 @@ func Run(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	walletService := service.NewWalletService(wallets, transactions, cfg.Wallet.SupportedCurrencies)
+	walletService := service.NewWalletService(txManager, wallets, transactions, cfg.Wallet.SupportedCurrencies)
 	paymentService := service.NewPaymentService(txManager, wallets, transactions, service.PaymentLimits{
 		MaxTopUpAmount:    cfg.Wallet.MaxTopUpAmount,
 		MaxTransferAmount: cfg.Wallet.MaxTransferAmount,
