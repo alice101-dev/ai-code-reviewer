@@ -559,7 +559,7 @@ func TestWalletService_Summary(t *testing.T) {
 	assert.Equal(t, int64(100_000), summary.TotalCredits)
 	assert.Equal(t, int64(25_000), summary.TotalDebits)
 	assert.Equal(t, int64(2), summary.TransactionCount)
-	assert.Equal(t, int64(125_000), summary.NetChange)
+	assert.Equal(t, int64(75_000), summary.NetChange)
 }
 
 func TestWalletService_SummaryFiltersByType(t *testing.T) {
@@ -576,12 +576,21 @@ func TestWalletService_SummaryFiltersByType(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	summary, err := f.walletSvc.Summary(ctx, alice.ID, wallet.ID, model.ActivityFilter{Type: model.TransactionTypeTopUp})
+	topUps, err := f.walletSvc.Summary(ctx, alice.ID, wallet.ID, model.ActivityFilter{Type: model.TransactionTypeTopUp})
 	require.NoError(t, err)
 
-	assert.Equal(t, int64(100_000), summary.TotalCredits)
-	assert.Equal(t, int64(0), summary.TotalDebits)
-	assert.Equal(t, int64(1), summary.TransactionCount)
+	assert.Equal(t, int64(100_000), topUps.TotalCredits)
+	assert.Equal(t, int64(0), topUps.TotalDebits)
+	assert.Equal(t, int64(100_000), topUps.NetChange)
+	assert.Equal(t, int64(1), topUps.TransactionCount)
+
+	transfers, err := f.walletSvc.Summary(ctx, alice.ID, wallet.ID, model.ActivityFilter{Type: model.TransactionTypeTransfer})
+	require.NoError(t, err)
+
+	assert.Equal(t, int64(0), transfers.TotalCredits)
+	assert.Equal(t, int64(25_000), transfers.TotalDebits)
+	assert.Equal(t, int64(-25_000), transfers.NetChange)
+	assert.Equal(t, int64(1), transfers.TransactionCount)
 }
 
 func TestWalletService_SummaryRequiresOwnership(t *testing.T) {

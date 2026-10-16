@@ -124,7 +124,7 @@ func (s *WalletService) Summary(ctx context.Context, userID, walletID uuid.UUID,
 	}
 
 	summary.Currency = wallet.Currency
-	summary.NetChange = summary.TotalCredits + summary.TotalDebits
+	summary.NetChange = summary.TotalCredits - summary.TotalDebits
 
 	return &summary, nil
 }
