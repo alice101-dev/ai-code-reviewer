@@ -1,0 +1,10 @@
+.git
+.github
+.env
+.env.*
+bin
+dist
+coverage.out
+*.md
+docker-compose.yml
+Makefile
